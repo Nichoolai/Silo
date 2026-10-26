@@ -15,7 +15,7 @@ Needs **JDK 21+** (check with `javac -version`).
 Data is saved as text files in the `data/` folder (created on first run). Delete that folder to start fresh. On an empty system the Dashboard offers **Load sample data** (clearly sample records, created through the normal rules).
 
 **Eclipse:** File → Import → Existing Maven Projects → choose this folder. Run `com.silo.ui.SiloApp`.
-**VS Code:** open the folder with the Java Extension Pack; run `SiloApp`.
+**VS Code:** open the `Silo-main` folder (the folder containing `pom.xml`) with the Java Extension Pack. Wait for Maven dependencies to resolve, then open `src/main/java/com/silo/ui/SiloApp.java` and click Run. You can also use `build-and-run.bat` (Windows) or `./build-and-run.sh` (macOS/Linux) with Maven installed.
 
 ## Screens
 Dashboard · Donations · Pickups · Volunteers · Recipients (with distribution history) · Reports (summary, near best-before, distributions, CSV export).
@@ -32,7 +32,7 @@ Dashboard · Donations · Pickups · Volunteers · Recipients (with distribution
 `mvn test` or `./run-tests.sh` — 27 JUnit 5 tests covering Merge Sort (empty, single, stability, priority rules, random data vs. a reference sort), queue, stack, search, validation, scheduling conflicts, distribution limits, undo, reports, CSV, persistence across restarts.
 
 ## Known limitations (honest list)
-- **Local only:** single user, plain-text files. No PostgreSQL, no REST API, no login/roles — the blueprint listed these as optional "if scope supports"; they were left out so the DSA work stays the focus. The `SiloService` / `FileStore` split is the place to swap in a database later.
+- **Local by default:** the main application still uses local text files and local account storage. Supabase helper classes exist, but the main UI/service is not yet wired to Supabase for its donation, pickup, volunteer, and recipient data. The `SiloService` / `FileStore` split is the place to swap in a database later.
 - No status-history table (the Dashboard shows a recent-activity log instead).
 - Not verified: the Maven build (`pom.xml`) — the build environment had no access to Maven Central. The `javac` scripts and the 27 tests were run and pass. Eclipse's Maven import will download JUnit automatically.
 - UI was rendered and checked on Linux (virtual display). Windows should look the same apart from using the Segoe UI font.

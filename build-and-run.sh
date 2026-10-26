@@ -1,6 +1,6 @@
 #!/bin/sh
-# Same as build-and-run.bat for Linux/macOS.
-set -e
-mkdir -p out
-javac -encoding UTF-8 -d out $(find src/main/java -name '*.java')
-java -Dsilo.data=data -cp out com.silo.ui.SiloApp
+set -eu
+command -v mvn >/dev/null 2>&1 || { echo "Maven is not installed or not on PATH."; exit 1; }
+mvn -q -DskipTests package dependency:copy-dependencies
+mkdir -p data
+java -Dsilo.data=data -cp "target/classes:target/dependency/*" com.silo.ui.SiloApp
