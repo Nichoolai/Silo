@@ -1,15 +1,15 @@
 
 package com.silo.config;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class SupabaseAuth {
 
@@ -71,9 +71,20 @@ public class SupabaseAuth {
 
             if (response.statusCode() < 200
                     || response.statusCode() >= 300) {
+
+                String error = result.path("msg").asText(
+                    result.path("message").asText(
+                        result.path("error_description").asText(
+                            result.path("error").asText(
+                                "No error details returned."
+                            )
+                        )
+                    )
+                );
+
                 throw new IOException(
-                    "Supabase sign-in failed. Check your credentials "
-                    + "and email confirmation settings."
+                    "Supabase sign-in failed (HTTP "
+                    + response.statusCode() + "): " + error
                 );
             }
 

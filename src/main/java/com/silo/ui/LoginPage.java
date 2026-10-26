@@ -313,9 +313,8 @@ public class LoginPage extends JFrame {
 
             JOptionPane.showMessageDialog(
                     this,
-                    "Silo could not connect to Supabase or retrieve "
-                    + "your profile. Please check your connection "
-                    + "and account profile.",
+                    "Silo request failed: " + ex.getClass().getSimpleName()
+                    + ": " + ex.getMessage(), 
                     "Login error",
                     JOptionPane.ERROR_MESSAGE);
 

@@ -1,4 +1,3 @@
-
 package com.silo.ui;
 
 import javax.swing.*;
