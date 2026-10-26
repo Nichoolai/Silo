@@ -1,0 +1,12 @@
+out/
+out-test/
+target/
+data/
+lib/
+shots/
+sources.txt
+*.class
+.classpath
+.project
+.settings/
+.vscode/
