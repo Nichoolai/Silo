@@ -1,0 +1,93 @@
+
+package com.silo.config;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+
+public class SupabaseAuth {
+
+    private static final String AUTH_URL =
+        "https://nnpxgjnthmyknphjxhwu.supabase.co/auth/v1/token?grant_type=password";
+
+    private final String apiKey;
+    private final HttpClient client;
+    private final ObjectMapper mapper;
+
+    public SupabaseAuth() {
+        apiKey = System.getenv("SUPABASE_PUBLISHABLE_KEY");
+
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException(
+                "Missing SUPABASE_PUBLISHABLE_KEY environment variable."
+            );
+        }
+
+        client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
+
+        mapper = new ObjectMapper();
+    }
+
+    public JsonNode signIn(String email, char[] password)
+            throws IOException, InterruptedException {
+
+        if (email == null || email.isBlank()
+                || password == null || password.length == 0) {
+            throw new IllegalArgumentException(
+                "Enter your email and password."
+            );
+        }
+
+        String passwordText = new String(password);
+
+        try {
+            String body = mapper.createObjectNode()
+                .put("email", email.trim())
+                .put("password", passwordText)
+                .toString();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(AUTH_URL))
+                .timeout(Duration.ofSeconds(20))
+                .header("apikey", apiKey)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+            HttpResponse<String> response = client.send(
+                request,
+                HttpResponse.BodyHandlers.ofString()
+            );
+
+            JsonNode result = mapper.readTree(response.body());
+
+            if (response.statusCode() < 200
+                    || response.statusCode() >= 300) {
+                throw new IOException(
+                    "Supabase sign-in failed. Check your credentials "
+                    + "and email confirmation settings."
+                );
+            }
+
+            if (!result.hasNonNull("access_token")) {
+                throw new IOException(
+                    "Supabase did not return an access token."
+                );
+            }
+
+            return result;
+
+        } finally {
+            passwordText = null;
+            java.util.Arrays.fill(password, '\0');
+        }
+    }
+}
