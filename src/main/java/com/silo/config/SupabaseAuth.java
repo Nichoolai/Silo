@@ -1,4 +1,3 @@
-
 package com.silo.config;
 
 import java.io.IOException;
@@ -21,11 +20,11 @@ public class SupabaseAuth {
     private final ObjectMapper mapper;
 
     public SupabaseAuth() {
-        apiKey = System.getenv("SUPABASE_PUBLISHABLE_KEY");
+        apiKey = SupabaseConfig.getPublishableKey();
 
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException(
-                "Missing SUPABASE_PUBLISHABLE_KEY environment variable."
+                "Missing Supabase publishable key."
             );
         }
 

@@ -3,12 +3,17 @@ package com.silo.service;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -17,6 +22,12 @@ import java.util.Properties;
 
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.silo.config.SupabaseAuth;
+import com.silo.config.SupabaseConfig;
 
 public class AuthService {
 
@@ -61,7 +72,7 @@ public class AuthService {
             return role;
         }
 
-                public Status getStatus() {
+        public Status getStatus() {
             return status;
         }
 
@@ -78,12 +89,23 @@ public class AuthService {
     private static final int ITERATIONS = 210_000;
     private static final int KEY_LENGTH = 256;
     private static final int SALT_LENGTH = 16;
+    private static final String SUPABASE_SIGNUP_URL = SupabaseConfig.SUPABASE_URL + "/auth/v1/signup";
+    private static final String PUBLISHABLE_KEY = "sb_publishable_tJ6Y1LgDPmUDuukAVQEiMg_tWY505dW";
 
     private final Path file;
     private final Properties accounts = new Properties();
     private final SecureRandom random = new SecureRandom();
+    private final HttpClient httpClient;
+    private final ObjectMapper mapper;
+    private final String apiKey;
 
     public AuthService(Path dataDirectory) {
+    this.apiKey = SupabaseConfig.getPublishableKey(); 
+           this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15))
+                .build();
+        this.mapper = new ObjectMapper();
+
         try {
             Files.createDirectories(dataDirectory);
             file = dataDirectory.resolve("accounts.properties");
@@ -95,7 +117,7 @@ public class AuthService {
             }
         } catch (IOException e) {
             throw new IllegalStateException(
-                "Could not load account storage.", e
+                    "Could not load account storage.", e
             );
         }
     }
@@ -149,28 +171,25 @@ public class AuthService {
 
         if (cleanName.length() < 2) {
             throw new IllegalArgumentException(
-                "Please enter your full name."
+                    "Please enter your full name."
             );
         }
 
         if (!cleanEmail.matches(
                 "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
             throw new IllegalArgumentException(
-                "Please enter a valid email address."
+                    "Please enter a valid email address."
             );
         }
 
         if (password == null || password.length < 8) {
             throw new IllegalArgumentException(
-                "Your password must contain at least 8 characters."
+                    "Your password must contain at least 8 characters."
             );
         }
 
-        if (accounts.containsKey(key(cleanEmail, "email"))) {
-            throw new IllegalArgumentException(
-                "An account with this email already exists."
-            );
-        }
+        // Register to Supabase Cloud Database first
+        registerToSupabase(cleanEmail, password, cleanName, role, status);
 
         byte[] salt = new byte[SALT_LENGTH];
         random.nextBytes(salt);
@@ -193,6 +212,46 @@ public class AuthService {
         return new Account(cleanName, cleanEmail, role, status);
     }
 
+    private void registerToSupabase(String email, char[] password, String name, Role role, Status status) {
+        try {
+            String passwordText = new String(password);
+            ObjectNode body = mapper.createObjectNode()
+                    .put("email", email)
+                    .put("password", passwordText);
+
+            ObjectNode dataNode = body.putObject("data");
+            dataNode.put("name", name);
+            dataNode.put("role", role.name());
+            dataNode.put("status", status.name());
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(SUPABASE_SIGNUP_URL))
+                    .timeout(Duration.ofSeconds(20))
+                    .header("apikey", apiKey)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofString()
+            );
+
+            JsonNode result = mapper.readTree(response.body());
+
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                String errorMessage = result.path("msg").asText(
+                        result.path("message").asText(
+                                result.path("error_description").asText(
+                                        result.path("error").asText("Supabase registration failed."))));
+                throw new IllegalArgumentException(errorMessage);
+            }
+        } catch (IOException | InterruptedException e) {
+            throw new RuntimeException("Failed to connect to Supabase for registration: " + e.getMessage(), e);
+        }
+    }
+
     public synchronized Account login(
             String email, char[] password) {
 
@@ -200,9 +259,38 @@ public class AuthService {
         String prefix = accounts.getProperty(
                 key(cleanEmail, "email"));
 
+        // Fallback: If the account exists in Supabase but lacks a local properties profile yet, authenticate and create it.
+        if (prefix == null) {
+            try {
+                SupabaseAuth supabaseAuth = new SupabaseAuth();
+                JsonNode authResult = supabaseAuth.signIn(cleanEmail, password);
+
+                if (authResult != null && authResult.hasNonNull("access_token")) {
+                    String defaultName = cleanEmail.split("@")[0];
+                    byte[] salt = new byte[SALT_LENGTH];
+                    random.nextBytes(salt);
+                    byte[] hash = hashPassword(password, salt);
+
+                    prefix = nextAccountPrefix();
+                    accounts.setProperty(key(cleanEmail, "email"), prefix);
+                    accounts.setProperty(prefix + "name", defaultName);
+                    accounts.setProperty(prefix + "email", cleanEmail);
+                    accounts.setProperty(prefix + "role", Role.FARMER.name());
+                    accounts.setProperty(prefix + "status", Status.ACTIVE.name());
+                    accounts.setProperty(prefix + "salt", Base64.getEncoder().encodeToString(salt));
+                    accounts.setProperty(prefix + "hash", Base64.getEncoder().encodeToString(hash));
+                    save();
+
+                    return new Account(defaultName, cleanEmail, Role.FARMER, Status.ACTIVE);
+                }
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Incorrect email or password.");
+            }
+        }
+
         if (prefix == null || password == null) {
             throw new IllegalArgumentException(
-                "Incorrect email or password."
+                    "Incorrect email or password."
             );
         }
 
@@ -215,7 +303,7 @@ public class AuthService {
 
             if (!MessageDigest.isEqual(expected, actual)) {
                 throw new IllegalArgumentException(
-                    "Incorrect email or password."
+                        "Incorrect email or password."
                 );
             }
 
@@ -227,13 +315,13 @@ public class AuthService {
 
             if (status == Status.PENDING) {
                 throw new IllegalArgumentException(
-                    "Your coordinator application is pending approval."
+                        "Your coordinator application is pending approval."
                 );
             }
 
             if (status == Status.REJECTED) {
                 throw new IllegalArgumentException(
-                    "Your coordinator application was not approved."
+                        "Your coordinator application was not approved."
                 );
             }
 
@@ -245,7 +333,7 @@ public class AuthService {
             throw e;
         } catch (RuntimeException e) {
             throw new IllegalStateException(
-                "Account data could not be read.", e
+                    "Account data could not be read.", e
             );
         }
     }
@@ -283,14 +371,14 @@ public class AuthService {
 
         if (prefix == null) {
             throw new IllegalArgumentException(
-                "No account exists for that email."
+                    "No account exists for that email."
             );
         }
 
         if (!Role.COORDINATOR.name().equals(
                 accounts.getProperty(prefix + "role"))) {
             throw new IllegalArgumentException(
-                "This account is not a coordinator account."
+                    "This account is not a coordinator account."
             );
         }
 
@@ -345,7 +433,7 @@ public class AuthService {
                     .getEncoded();
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException(
-                "Password security is unavailable.", e
+                    "Password security is unavailable.", e
             );
         } finally {
             spec.clearPassword();
@@ -371,7 +459,7 @@ public class AuthService {
             accounts.store(out, "Silo local account records");
         } catch (IOException e) {
             throw new IllegalStateException(
-                "Could not save the account. Check the data folder.", e
+                    "Could not save the account. Check the data folder.", e
             );
         }
     }
